@@ -7,7 +7,7 @@
 //! let string = MagicString::new(&input);
 //!
 //! assert!(string.contains('3'));
-//! assert_eq!(string.find('3').unrwap(), 3);
+//! assert_eq!(string.find('3').unwrap(), 3);
 //! ```
 //!
 //! To use [`MagicString::find`] and [`MagicString::contains`] 
@@ -103,8 +103,7 @@ impl<'a> DoubleEndedIterator for MagicIter<'a> {
 // -----------------------------------------------------------------------------
 //     - Magic string -
 // -----------------------------------------------------------------------------
-/// A zero allocations string made up of string slices.
-/// Cheap to copy
+/// A non allocating string made up of string slices.
 #[derive(Copy, Clone)]
 pub struct MagicString<'a> {
     inner: &'a [&'a str],
