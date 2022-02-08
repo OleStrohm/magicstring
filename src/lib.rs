@@ -1,3 +1,17 @@
+#![deny(missing_docs)]
+//! A zero allocations string type made up of string slices.
+//!
+//! ```
+//! use magicstring::{MagicString, Contains, Find};
+//! let input = ["012", "34", "5"];
+//! let string = MagicString::new(&input);
+//!
+//! assert!(string.contains('3'));
+//! assert_eq!(string.find('3').unrwap(), 3);
+//! ```
+//!
+//! To use [`MagicString::find`] and [`MagicString::contains`] 
+//! import `magicstring::{Find, Contains}`.
 use core::fmt;
 use core::str::Bytes as StdBytes;
 use core::str::CharIndices as StdCharIndices;
@@ -8,6 +22,7 @@ use unicode_width::UnicodeWidthStr;
 mod contains;
 mod find;
 mod fromrange;
+mod sealed;
 
 use fromrange::FromRange;
 
@@ -24,7 +39,7 @@ pub use find::Find;
 //
 // -----------------------------------------------------------------------------
 #[derive(Debug, Copy, Clone)]
-pub enum Offset {
+enum Offset {
     None,
     Start(usize),
     End(usize),
@@ -35,6 +50,7 @@ pub enum Offset {
 //     - Magic iterator -
 //     It's not really magic
 // -----------------------------------------------------------------------------
+/// Iterator over the inner string slices
 pub struct MagicIter<'a> {
     inner: &'a [&'a str],
     index: usize,
@@ -87,37 +103,46 @@ impl<'a> DoubleEndedIterator for MagicIter<'a> {
 // -----------------------------------------------------------------------------
 //     - Magic string -
 // -----------------------------------------------------------------------------
+/// A zero allocations string made up of string slices.
+/// Cheap to copy
 #[derive(Copy, Clone)]
 pub struct MagicString<'a> {
     inner: &'a [&'a str],
-    pub offset: Offset,
+    offset: Offset,
 }
 
 impl<'a> MagicString<'a> {
+    /// Create a new instance of a `MagicString` from string slices.
     pub fn new(inner: &'a [&'a str]) -> Self {
         Self { inner, offset: Offset::None }
     }
 
+    /// The total length of the string in bytes
     pub fn len(&self) -> usize {
         self.iter().map(|s| s.len()).sum()
     }
 
+    /// Returns true if this string has a length of zero, otherwise false
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// An iterator over the bytes of the inner string slices
     pub fn bytes(&self) -> Bytes {
         Bytes::new(self.iter())
     }
 
+    /// An iterator over the characters of the inner string slices
     pub fn chars(&self) -> Chars<'a> {
         Chars::new(self.iter())
     }
 
+    /// An iterator over the characters and their index (byte position) of the inner string slices
     pub fn char_indices(&self) -> CharIndices<'a> {
         CharIndices::new(self.iter())
     }
 
+    /// Split the string in two:
     pub fn split_at(&self, index: usize) -> (Self, Self) {
         let (slice, index) = self.index(index);
 
@@ -148,10 +173,14 @@ impl<'a> MagicString<'a> {
         (Self::from_split(left_offset, left), Self::from_split(right_offset, right))
     }
 
+    /// Trim any white space from the start and the end of the string.
+    /// Unlike [`&str`] this does not work for RTL.
     pub fn trim(&self) -> Self {
         self.trim_start().trim_end()
     }
 
+    /// Trim the start of the string from any white space characters.
+    /// This will not work correctly with RTL
     pub fn trim_start(&self) -> Self {
         let mut slice_index = 0;
         let mut char_index = 0;
@@ -176,6 +205,8 @@ impl<'a> MagicString<'a> {
         Self::from_split(offset, &self.inner[slice_index..])
     }
 
+    /// Trim the end of the string from any white space characters.
+    /// This will not work correctly with RTL
     pub fn trim_end(&self) -> Self {
         let mut slice_index = self.inner.len();
         let mut char_index = 0;
@@ -202,6 +233,23 @@ impl<'a> MagicString<'a> {
         Self::from_split(offset, &self.inner[..slice_index])
     }
 
+    /// Get a [`MagicString`] from a range.
+    /// ```
+    /// use magicstring::MagicString;
+    /// let input = ["012", "345"];
+    /// let string = MagicString::new(&input);
+    /// // Exclusive range
+    /// let value = string.get(1..5);
+    /// assert_eq!(value.to_string(), "1234".to_string());
+    ///
+    /// // Inclusive range
+    /// let value = string.get(1..=5);
+    /// assert_eq!(value.to_string(), "12345".to_string());
+    ///
+    /// // Range to
+    /// let value = string.get(..5);
+    /// assert_eq!(value.to_string(), "01234".to_string());
+    /// ```
     pub fn get(&self, range: impl FromRange) -> Self {
         let (start, end) = range.into_start_end(self.len());
 
@@ -210,10 +258,20 @@ impl<'a> MagicString<'a> {
         ret
     }
 
+    /// Produce an iterator over the inner string slices.
     pub fn iter(&self) -> MagicIter<'a> {
         MagicIter { inner: self.inner, offset: self.offset, index: 0 }
     }
 
+    /// Remove the last char from the string
+    /// ```
+    /// use magicstring::MagicString;
+    /// let input = ["012", "345"];
+    /// let mut string = MagicString::new(&input);
+    /// let c = string.pop().unwrap();
+    /// assert_eq!(c, '5');
+    /// assert_eq!(string.to_string(), "01234".to_string());
+    /// ```
     pub fn pop(&mut self) -> Option<char> {
         let c = self.iter().rev().next().and_then(|s| s.chars().last())?;
 
@@ -284,6 +342,7 @@ impl<'a> UnicodeWidthStr for MagicString<'a> {
 // -----------------------------------------------------------------------------
 //     - Bytes -
 // -----------------------------------------------------------------------------
+/// An iterator over the bytes of the [`MagicString`]
 pub struct Bytes<'a> {
     inner: MagicIter<'a>,
     current: Option<StdBytes<'a>>,
@@ -314,6 +373,7 @@ impl<'a> Iterator for Bytes<'a> {
 // -----------------------------------------------------------------------------
 //     - Chars -
 // -----------------------------------------------------------------------------
+/// An iterator over the chars of the [`MagicString`]
 pub struct Chars<'a> {
     inner: MagicIter<'a>,
     current: Option<StdChars<'a>>,
@@ -344,7 +404,7 @@ impl<'a> Iterator for Chars<'a> {
 // -----------------------------------------------------------------------------
 //     - Char indices -
 // -----------------------------------------------------------------------------
-
+/// An iterator over the characters and their index of the [`MagicString`]
 pub struct CharIndices<'a> {
     inner: MagicIter<'a>,
     current: Option<(usize, StdCharIndices<'a>)>,

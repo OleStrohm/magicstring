@@ -1,6 +1,8 @@
 use super::MagicString;
 
-pub trait Contains<P> {
+/// Checks if a [`MagicString`] contains either a [`char`] or a slice of chars.
+pub trait Contains<P>: crate::sealed::Sealed {
+    /// Does the string contain the pattern?
     fn contains(&self, pat: P) -> bool;
 }
 
