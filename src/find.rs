@@ -1,15 +1,15 @@
-use super::MagicString;
+use super::MagicStringTrait;
 
 
 /// Finds the position of either a [`char`] or a slice of chars.
-pub trait Find<P> : crate::sealed::Sealed {
+pub trait Find<P> {
     /// Find the pattern inside the string, starting from the beginning of the string
     fn find(&self, pat: P) -> Option<usize>;
     /// Find the pattern inside the string, starting from the end of the string
     fn rfind(&self, pat: P) -> Option<usize>;
 }
 
-impl<'a> Find<char> for MagicString<'a> {
+impl<'a, T: MagicStringTrait<'a>> Find<char> for T {
     fn find(&self, pat: char) -> Option<usize> {
         let mut offset = 0;
         for s in self.iter() {
@@ -36,7 +36,7 @@ impl<'a> Find<char> for MagicString<'a> {
     }
 }
 
-impl<'a> Find<&[char]> for MagicString<'a> {
+impl<'a, T: MagicStringTrait<'a>> Find<&[char]> for T {
     fn find(&self, pat: &[char]) -> Option<usize> {
         let mut offset = 0;
         for s in self.iter() {
@@ -65,6 +65,7 @@ impl<'a> Find<&[char]> for MagicString<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::MagicString;
 
     #[test]
     fn find_by_char() {

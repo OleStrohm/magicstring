@@ -2,7 +2,7 @@
 //! A zero allocations string type made up of string slices.
 //!
 //! ```
-//! use magicstring::{MagicString, Contains, Find};
+//! use magicstring::{MagicStringTrait, MagicString, Contains, Find};
 //! let input = ["012", "34", "5"];
 //! let string = MagicString::new(&input);
 //!
@@ -23,11 +23,14 @@ mod contains;
 mod find;
 mod fromrange;
 mod sealed;
+mod concat;
 
 use fromrange::FromRange;
 
 pub use contains::Contains;
 pub use find::Find;
+
+use self::concat::Concat;
 
 // -----------------------------------------------------------------------------
 //     - Slice offset -
@@ -100,6 +103,98 @@ impl<'a> DoubleEndedIterator for MagicIter<'a> {
     }
 }
 
+/// Magic string trait
+pub trait MagicStringTrait<'a>: Sized + Copy {
+    /// &str iterator type
+    type Iter: Iterator<Item=&'a str> + DoubleEndedIterator;
+    /// byte iterator type
+    type Bytes: Iterator<Item=u8>;
+    /// char iterator type
+    type Chars: Iterator<Item=char>;
+    /// (index, char) iterator type
+    type CharIndices: Iterator<Item=(usize, char)>;
+
+    /// The total length of the string in bytes
+    fn len(&self) -> usize {
+        self.iter().map(|s| s.len()).sum()
+    }
+
+    /// Produce an iterator over the inner string slices.
+    fn iter(&self) -> Self::Iter;
+
+    /// An iterator over the bytes of the inner string slices
+    fn bytes(self) -> Self::Bytes;
+
+    /// An iterator over the characters of the inner string slices
+    fn chars(&self) -> Self::Chars;
+
+    /// An iterator over the characters and their index (byte position) of the inner string slices
+    fn char_indices(&self) -> Self::CharIndices;
+
+    /// Returns true if this string has a length of zero, otherwise false
+    fn is_empty(&self) -> bool;
+
+    /// Split the string in two:
+    fn split_at(&self, index: usize) -> (Self, Self);
+
+    /// Trim any white space from the start and the end of the string.
+    /// Unlike [`&str`] this does not work for RTL.
+    fn trim(&self) -> Self {
+        self.trim_start().trim_end()
+    }
+
+    /// Trim the start of the string from any white space characters.
+    /// This will not work correctly with RTL
+    fn trim_start(&self) -> Self;
+
+    /// Trim the end of the string from any white space characters.
+    /// This will not work correctly with RTL
+    fn trim_end(&self) -> Self;
+
+    /// Get a [`MagicString`] from a range.
+    /// ```
+    /// use magicstring::MagicStringTrait;
+    /// use magicstring::MagicString;
+    /// let input = ["012", "345"];
+    /// let string = MagicString::new(&input);
+    /// // Exclusive range
+    /// let value = string.get(1..5);
+    /// assert_eq!(value.to_string(), "1234".to_string());
+    ///
+    /// // Inclusive range
+    /// let value = string.get(1..=5);
+    /// assert_eq!(value.to_string(), "12345".to_string());
+    ///
+    /// // Range to
+    /// let value = string.get(..5);
+    /// assert_eq!(value.to_string(), "01234".to_string());
+    /// ```
+    fn get(&self, range: impl FromRange) -> Self {
+        let (start, end) = range.into_start_end(self.len());
+
+        let (ret, _) = self.split_at(end);
+        let (_, ret) = ret.split_at(start);
+        ret
+    }
+
+    /// Remove the last char from the string
+    /// ```
+    /// use magicstring::MagicStringTrait;
+    /// use magicstring::MagicString;
+    /// let input = ["012", "345"];
+    /// let mut string = MagicString::new(&input);
+    /// let c = string.pop().unwrap();
+    /// assert_eq!(c, '5');
+    /// assert_eq!(string.to_string(), "01234".to_string());
+    /// ```
+    fn pop(&mut self) -> Option<char>;
+
+    /// Concats
+    fn concat<R: MagicStringTrait<'a>>(self, right: R) -> concat::Concat<Self, R> {
+        Concat::new(self, right)
+    }
+}
+
 // -----------------------------------------------------------------------------
 //     - Magic string -
 // -----------------------------------------------------------------------------
@@ -116,33 +211,63 @@ impl<'a> MagicString<'a> {
         Self { inner, offset: Offset::None }
     }
 
+    // Index is operating on processed slices
+    fn index(&self, index: usize) -> (usize, usize) {
+        let mut offset = 0;
+        for (slice_index, slice) in self.iter().enumerate() {
+            if index - offset > slice.len() {
+                offset += slice.len();
+                continue;
+            }
+
+            return (slice_index, index - offset);
+        }
+
+        panic!("index out of range");
+    }
+
+    fn from_split(offset: Offset, inner: &'a [&'a str]) -> Self {
+        Self { inner, offset }
+    }
+}
+
+impl<'a> MagicStringTrait<'a> for MagicString<'a> {
+    type Iter = MagicIter<'a>;
+    type Bytes = Bytes<'a>;
+    type Chars = Chars<'a>;
+    type CharIndices = CharIndices<'a>;
     /// The total length of the string in bytes
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.iter().map(|s| s.len()).sum()
     }
 
-    /// Returns true if this string has a length of zero, otherwise false
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    /// Produce an iterator over the inner string slices.
+    fn iter(&self) -> Self::Iter {
+        MagicIter { inner: self.inner, offset: self.offset, index: 0 }
     }
 
     /// An iterator over the bytes of the inner string slices
-    pub fn bytes(&self) -> Bytes {
+    fn bytes(self) -> Self::Bytes {
         Bytes::new(self.iter())
     }
 
     /// An iterator over the characters of the inner string slices
-    pub fn chars(&self) -> Chars<'a> {
+    fn chars(&self) -> Self::Chars {
         Chars::new(self.iter())
     }
 
     /// An iterator over the characters and their index (byte position) of the inner string slices
-    pub fn char_indices(&self) -> CharIndices<'a> {
+    fn char_indices(&self) -> Self::CharIndices {
         CharIndices::new(self.iter())
     }
 
+    /// Returns true if this string has a length of zero, otherwise false
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Split the string in two:
-    pub fn split_at(&self, index: usize) -> (Self, Self) {
+    fn split_at(&self, index: usize) -> (Self, Self) {
         let (slice, index) = self.index(index);
 
         let left = &self.inner[..=slice];
@@ -174,19 +299,21 @@ impl<'a> MagicString<'a> {
 
     /// Trim any white space from the start and the end of the string.
     /// Unlike [`&str`] this does not work for RTL.
-    pub fn trim(&self) -> Self {
+    fn trim(&self) -> Self {
         self.trim_start().trim_end()
     }
 
     /// Trim the start of the string from any white space characters.
     /// This will not work correctly with RTL
-    pub fn trim_start(&self) -> Self {
+    fn trim_start(&self) -> Self {
         let mut slice_index = 0;
         let mut char_index = 0;
 
         for (index, slice) in self.iter().enumerate() {
             let trimmed = slice.trim_start();
             if trimmed.is_empty() {
+                slice_index = index;
+                char_index = slice.len();
                 continue;
             }
             slice_index = index;
@@ -206,7 +333,7 @@ impl<'a> MagicString<'a> {
 
     /// Trim the end of the string from any white space characters.
     /// This will not work correctly with RTL
-    pub fn trim_end(&self) -> Self {
+    fn trim_end(&self) -> Self {
         let mut slice_index = self.inner.len();
         let mut char_index = 0;
         let mut slice_len = 0;
@@ -215,6 +342,8 @@ impl<'a> MagicString<'a> {
             slice_index = self.inner.len() - i;
             let trimmed = slice.trim_end();
             if trimmed.is_empty() {
+                slice_len = slice.len();
+                char_index = 0;
                 continue;
             }
             slice_len = slice.len();
@@ -232,38 +361,9 @@ impl<'a> MagicString<'a> {
         Self::from_split(offset, &self.inner[..slice_index])
     }
 
-    /// Get a [`MagicString`] from a range.
-    /// ```
-    /// use magicstring::MagicString;
-    /// let input = ["012", "345"];
-    /// let string = MagicString::new(&input);
-    /// // Exclusive range
-    /// let value = string.get(1..5);
-    /// assert_eq!(value.to_string(), "1234".to_string());
-    ///
-    /// // Inclusive range
-    /// let value = string.get(1..=5);
-    /// assert_eq!(value.to_string(), "12345".to_string());
-    ///
-    /// // Range to
-    /// let value = string.get(..5);
-    /// assert_eq!(value.to_string(), "01234".to_string());
-    /// ```
-    pub fn get(&self, range: impl FromRange) -> Self {
-        let (start, end) = range.into_start_end(self.len());
-
-        let (ret, _) = self.split_at(end);
-        let (_, ret) = ret.split_at(start);
-        ret
-    }
-
-    /// Produce an iterator over the inner string slices.
-    pub fn iter(&self) -> MagicIter<'a> {
-        MagicIter { inner: self.inner, offset: self.offset, index: 0 }
-    }
-
     /// Remove the last char from the string
     /// ```
+    /// use magicstring::MagicStringTrait;
     /// use magicstring::MagicString;
     /// let input = ["012", "345"];
     /// let mut string = MagicString::new(&input);
@@ -271,7 +371,7 @@ impl<'a> MagicString<'a> {
     /// assert_eq!(c, '5');
     /// assert_eq!(string.to_string(), "01234".to_string());
     /// ```
-    pub fn pop(&mut self) -> Option<char> {
+    fn pop(&mut self) -> Option<char> {
         let c = self.iter().rev().next().and_then(|s| s.chars().last())?;
 
         let remove = c.len_utf8();
@@ -279,25 +379,6 @@ impl<'a> MagicString<'a> {
         *self = self.get(..to);
 
         Some(c)
-    }
-
-    // Index is operating on processed slices
-    fn index(&self, index: usize) -> (usize, usize) {
-        let mut offset = 0;
-        for (slice_index, slice) in self.iter().enumerate() {
-            if index - offset > slice.len() {
-                offset += slice.len();
-                continue;
-            }
-
-            return (slice_index, index - offset);
-        }
-
-        panic!("index out of range");
-    }
-
-    fn from_split(offset: Offset, inner: &'a [&'a str]) -> Self {
-        Self { inner, offset }
     }
 }
 

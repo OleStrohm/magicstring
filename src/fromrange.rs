@@ -45,7 +45,7 @@ impl FromRange for RangeToInclusive<usize> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::MagicString;
+    use crate::{MagicStringTrait, MagicString};
 
     fn test_range(range: impl FromRange, expected_output: &str) {
         let s = ["0123", "4", "5"];
